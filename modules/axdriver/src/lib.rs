@@ -75,6 +75,9 @@ mod structs;
 #[cfg(feature = "virtio")]
 mod virtio;
 
+#[cfg(feature = "e1000")]
+mod e1000;
+
 #[cfg(feature = "ixgbe")]
 mod ixgbe;
 

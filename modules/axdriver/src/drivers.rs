@@ -128,3 +128,14 @@ cfg_if::cfg_if! {
         }
     }
 }
+
+cfg_if::cfg_if! {
+    if #[cfg(net_dev = "e1000")] {
+        use crate::e1000::{E1000Driver, E1000Net, E1000DevMeta};
+        
+        register_net_driver!(
+            E1000Driver,
+            <E1000Net as E1000DevMeta>::Device
+        );
+    }
+}
