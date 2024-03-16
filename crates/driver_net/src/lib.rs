@@ -1,9 +1,14 @@
 //! Common traits and types for network device (NIC) drivers.
+#![feature(const_trait_impl)] //调试virtio-net需要
 
 #![no_std]
 #![feature(const_mut_refs)]
 #![feature(const_slice_from_raw_parts_mut)]
 #![feature(box_into_inner)]
+
+#[cfg(feature = "e1000")]
+/// ixgbe NIC device driver.
+pub mod e1000;
 
 #[cfg(feature = "ixgbe")]
 /// ixgbe NIC device driver.

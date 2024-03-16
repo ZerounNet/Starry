@@ -12,9 +12,12 @@ documentation = "https://rcore-os.github.io/arceos/driver_net/index.html"
 [features]
 default = []
 ixgbe = ["dep:ixgbe-driver"]
+e1000 = ["dep:e1000-driver", "dep:virtio-drivers"]
 
 [dependencies]
 spin = "0.9"
 log = "0.4"
 driver_common = { path = "../driver_common" }
 ixgbe-driver = {git = "https://github.com/KuangjuX/ixgbe-driver.git", rev = "8e5eb74", optional = true}
+e1000-driver = {git = "https://github.com/elliott10/e1000-driver.git", rev = "7b2458e5", optional = true}
+virtio-drivers = { git = "https://github.com/rcore-os/virtio-drivers.git", rev = "4b60f5d", optional = true}
