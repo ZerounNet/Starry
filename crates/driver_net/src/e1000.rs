@@ -1,97 +1,43 @@
-use alloc::{sync::Arc, vec::Vec};
+use core::convert::From;
+use core::{mem::ManuallyDrop, ptr::NonNull};
+use alloc::boxed::Box;
+use alloc::vec::Vec;
+
+use alloc::{collections::VecDeque, sync::Arc};
 use driver_common::{BaseDriverOps, DevError, DevResult, DeviceType};
-use crate::{EthernetAddress, NetBuf, NetBufBox, NetBufPool, NetBufPtr, NetDriverOps};
-use virtio_drivers::{device::net::VirtIONetRaw as InnerDev, transport::Transport, Hal};
+use e1000_driver::e1000::E1000Device;
 
-const fn as_dev_err(e: virtio_drivers::Error) -> DevError {
-    use virtio_drivers::Error::*;
-    match e {
-        QueueFull => DevError::BadState,
-        NotReady => DevError::Again,
-        WrongToken => DevError::BadState,
-        AlreadyUsed => DevError::AlreadyExists,
-        InvalidParam => DevError::InvalidParam,
-        DmaError => DevError::NoMemory,
-        IoError => DevError::Io,
-        Unsupported => DevError::Unsupported,
-        ConfigSpaceTooSmall => DevError::BadState,
-        ConfigSpaceMissing => DevError::BadState,
-        _ => DevError::BadState,
-    }
-}
-
+pub use e1000_driver::e1000::KernelFunc;
+use crate::{EthernetAddress, NetBufBox, NetBufPtr, NetDriverOps};
 
 extern crate alloc;
 
-const NET_BUF_LEN: usize = 1526;
+const RECV_BATCH_SIZE: usize = 64;
+const RX_BUFFER_SIZE: usize = 1024;
 
-/// The VirtIO network device driver.
-///
-/// `QS` is the VirtIO queue size.
-pub struct E1000Nic<H: Hal, T: Transport, const QS: usize> {
-    rx_buffers: [Option<NetBufBox>; QS],
-    tx_buffers: [Option<NetBufBox>; QS],
+pub struct E1000Nic<'a, K: KernelFunc> {
+    inner: E1000Device<'a, K>,
     free_tx_bufs: Vec<NetBufBox>,
-    buf_pool: Arc<NetBufPool>,
-    inner: InnerDev<H, T, QS>,
 }
 
-unsafe impl<H: Hal, T: Transport, const QS: usize> Send for E1000Nic<H, T, QS> {}
-unsafe impl<H: Hal, T: Transport, const QS: usize> Sync for E1000Nic<H, T, QS> {}
+unsafe impl<'a, K: KernelFunc> Sync for E1000Nic<'a, K> {}
+unsafe impl<'a, K: KernelFunc> Send for E1000Nic<'a, K> {}
 
-impl<H: Hal, T: Transport, const QS: usize> E1000Nic<H, T, QS> {
-    /// Creates a new driver instance and initializes the device, or returns
-    /// an error if any step fails.
-    pub fn try_new(transport: T) -> DevResult<Self> {
-        // 0. Create a new driver instance.
-        const NONE_BUF: Option<NetBufBox> = None;
-        let inner = InnerDev::new(transport).map_err(as_dev_err)?;
-        let rx_buffers = [NONE_BUF; QS];
-        let tx_buffers = [NONE_BUF; QS];
-        let buf_pool = NetBufPool::new(2 * QS, NET_BUF_LEN)?;
-        let free_tx_bufs = Vec::with_capacity(QS);
-
-        let mut dev = Self {
-            rx_buffers,
-            inner,
-            tx_buffers,
-            free_tx_bufs,
-            buf_pool,
-        };
-
-        // 1. Fill all rx buffers.
-        for (i, rx_buf_place) in dev.rx_buffers.iter_mut().enumerate() {
-            let mut rx_buf = dev.buf_pool.alloc_boxed().ok_or(DevError::NoMemory)?;
-            // Safe because the buffer lives as long as the queue.
-            let token = unsafe {
-                dev.inner
-                    .receive_begin(rx_buf.raw_buf_mut())
-                    .map_err(as_dev_err)?
-            };
-            assert_eq!(token, i as u16);
-            *rx_buf_place = Some(rx_buf);
-        }
-
-        // 2. Allocate all tx buffers.
-        for _ in 0..QS {
-            let mut tx_buf = dev.buf_pool.alloc_boxed().ok_or(DevError::NoMemory)?;
-            // Fill header
-            let hdr_len = dev
-                .inner
-                .fill_buffer_header(tx_buf.raw_buf_mut())
-                .or(Err(DevError::InvalidParam))?;
-            tx_buf.set_header_len(hdr_len);
-            dev.free_tx_bufs.push(tx_buf);
-        }
-
-        // 3. Return the driver instance.
-        Ok(dev)
+impl<'a, K: KernelFunc> E1000Nic<'a, K> {
+    pub fn init(mut kfn: K, mapped_regs: usize) -> DevResult<Self> {
+        Ok(Self {
+            inner: E1000Device::<K>::new(kfn, mapped_regs).map_err(|err| {
+                log::error!("Failed to initialize e1000 device: {:?}", err);
+                DevError::BadState
+            })?,
+            free_tx_bufs: Vec::with_capacity(RX_BUFFER_SIZE),
+        })
     }
 }
 
-impl<H: Hal, T: Transport, const QS: usize> const BaseDriverOps for E1000Nic<H, T, QS> {
+impl<'a, K: KernelFunc> BaseDriverOps for E1000Nic<'a, K> {
     fn device_name(&self) -> &str {
-        "virtio-net"
+        "e1000:Intel 82540EP/EM"
     }
 
     fn device_type(&self) -> DeviceType {
@@ -99,97 +45,55 @@ impl<H: Hal, T: Transport, const QS: usize> const BaseDriverOps for E1000Nic<H, 
     }
 }
 
-impl<H: Hal, T: Transport, const QS: usize> NetDriverOps for E1000Nic<H, T, QS> {
-    #[inline]
+impl<'a, K: KernelFunc> NetDriverOps for E1000Nic<'a, K> {
     fn mac_address(&self) -> EthernetAddress {
-        EthernetAddress(self.inner.mac_address())
+        EthernetAddress([0x00, 0x0c, 0x29, 0x3e, 0x4f, 0x50])
     }
 
-    #[inline]
-    fn can_transmit(&self) -> bool {
-        !self.free_tx_bufs.is_empty() && self.inner.can_send()
-    }
-
-    #[inline]
-    fn can_receive(&self) -> bool {
-        self.inner.poll_receive().is_some()
-    }
-
-    #[inline]
     fn rx_queue_size(&self) -> usize {
-        QS
+        256
     }
 
-    #[inline]
     fn tx_queue_size(&self) -> usize {
-        QS
+        256
+    }
+
+    fn can_receive(&self) -> bool {
+        true
+    }
+
+    fn can_transmit(&self) -> bool {
+        true
     }
 
     fn recycle_rx_buffer(&mut self, rx_buf: NetBufPtr) -> DevResult {
-        let mut rx_buf = unsafe { NetBuf::from_buf_ptr(rx_buf) };
-        // Safe because we take the ownership of `rx_buf` back to `rx_buffers`,
-        // it lives as long as the queue.
-        let new_token = unsafe {
-            self.inner
-                .receive_begin(rx_buf.raw_buf_mut())
-                .map_err(as_dev_err)?
-        };
-        // `rx_buffers[new_token]` is expected to be `None` since it was taken
-        // away at `Self::receive()` and has not been added back.
-        if self.rx_buffers[new_token as usize].is_some() {
-            return Err(DevError::BadState);
-        }
-        self.rx_buffers[new_token as usize] = Some(rx_buf);
+        drop(rx_buf);
         Ok(())
     }
 
     fn recycle_tx_buffers(&mut self) -> DevResult {
-        while let Some(token) = self.inner.poll_transmit() {
-            let tx_buf = self.tx_buffers[token as usize]
-                .take()
-                .ok_or(DevError::BadState)?;
-            unsafe {
-                self.inner
-                    .transmit_complete(token, tx_buf.packet_with_header())
-                    .map_err(as_dev_err)?;
-            }
-            // Recycle the buffer.
-            self.free_tx_bufs.push(tx_buf);
-        }
-        Ok(())
-    }
-
-    fn transmit(&mut self, tx_buf: NetBufPtr) -> DevResult {
-        // 0. prepare tx buffer.
-        let tx_buf = unsafe { NetBuf::from_buf_ptr(tx_buf) };
-        // 1. transmit packet.
-        let token = unsafe {
-            self.inner
-                .transmit_begin(tx_buf.packet_with_header())
-                .map_err(as_dev_err)?
-        };
-        self.tx_buffers[token as usize] = Some(tx_buf);
         Ok(())
     }
 
     fn receive(&mut self) -> DevResult<NetBufPtr> {
-        if let Some(token) = self.inner.poll_receive() {
-            let mut rx_buf = self.rx_buffers[token as usize]
-                .take()
-                .ok_or(DevError::BadState)?;
-            // Safe because the buffer lives as long as the queue.
-            let (hdr_len, pkt_len) = unsafe {
-                self.inner
-                    .receive_complete(token, rx_buf.raw_buf_mut())
-                    .map_err(as_dev_err)?
-            };
-            rx_buf.set_header_len(hdr_len);
-            rx_buf.set_packet_len(pkt_len);
-
-            Ok(rx_buf.into_buf_ptr())
-        } else {
-            Err(DevError::Again)
+        match self.inner.e1000_recv() {
+            None => Err(DevError::Again),
+            Some(packets) => {
+                let total_len = packets.iter().map(|p| p.len()).sum();
+                let mut buf = Box::new(Vec::<u8>::with_capacity(total_len));
+                let mut offset = 0;
+                for packet in packets {
+                    buf[offset..offset + packet.len()].copy_from_slice(&packet);
+                    offset += packet.len();
+                }
+                Ok(NetBufPtr::new(NonNull::dangling(), NonNull::new(Box::into_raw(buf) as *mut u8).unwrap(), total_len))
+            },
         }
+    }
+
+    fn transmit(&mut self, tx_buf: NetBufPtr) -> DevResult {
+        self.inner.e1000_transmit(tx_buf.packet());
+        Ok(())
     }
 
     fn alloc_tx_buffer(&mut self, size: usize) -> DevResult<NetBufPtr> {

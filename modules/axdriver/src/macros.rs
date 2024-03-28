@@ -34,10 +34,6 @@ macro_rules! for_each_drivers {
         #[allow(unused_imports)]
         use crate::virtio::{self, VirtIoDevMeta};
 
-        #[cfg(feature = "e1000")]
-        #[allow(unused_imports)]
-        use crate::e1000::{self, E1000DevMeta};
-
         #[cfg(net_dev = "virtio-net")]
         {
             type $drv_type = <virtio::VirtIoNet as VirtIoDevMeta>::Driver;
@@ -70,7 +66,7 @@ macro_rules! for_each_drivers {
         }
         #[cfg(net_dev = "e1000")]
         {
-            type $drv_type = <e1000::E1000Net as E1000DevMeta>::Driver;
+            type $drv_type = crate::drivers::E1000Driver;
             $code
         }
     }};
