@@ -1013,9 +1013,11 @@ name = "driver_net"
 version = "0.1.0"
 dependencies = [
  "driver_common",
+ "e1000-driver",
  "ixgbe-driver",
  "log",
  "spin 0.9.8",
+ "virtio-drivers",
 ]
 
 [[package]]
@@ -1041,6 +1043,15 @@ name = "dw_apb_uart"
 version = "0.1.0"
 dependencies = [
  "tock-registers",
+]
+
+[[package]]
+name = "e1000-driver"
+version = "0.2.0"
+source = "git+https://github.com/elliott10/e1000-driver.git?rev=7b2458e5#7b2458e5606909fd7116072cf07844db006559a0"
+dependencies = [
+ "log",
+ "volatile 0.3.0",
 ]
 
 [[package]]

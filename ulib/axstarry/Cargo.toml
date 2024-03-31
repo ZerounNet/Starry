@@ -54,8 +54,10 @@ futex = ["axfeat/futex"]
 
 # Network
 ip = ["axnet/ip"]
-net = ["ip", "arceos_api/net", "axfeat/net", "dep:axsync"]
-e1000_net = ["ip", "arceos_api/net", "axfeat/driver-e1000", "dep:axsync"]
+# net = ["ip", "arceos_api/net", "axfeat/net", "dep:axsync"]
+net = ["dep:axnet", "arceos_api/net", "axfeat/net", "dep:axsync"]
+# e1000_net = ["ip", "arceos_api/net", "axfeat/driver-e1000", "dep:axsync"]
+e1000_net = ["arceos_api/net", "axfeat/driver-e1000", "dep:axsync"]
 
 # Logging
 log-level-off = ["axfeat/log-level-off"]

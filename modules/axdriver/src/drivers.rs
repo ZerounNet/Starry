@@ -184,6 +184,7 @@ cfg_if::cfg_if! {
                             } => {
                                 let mut kfn = KernelFuncObj;
                                 // panic!("arrived");
+                                info!("E1000Driver probe pci {:x} {:x}", address,size);
                                 let nic = E1000Nic::<KernelFuncObj>::init(
                                     kfn,
                                     phys_to_virt((address as usize).into()).into(),

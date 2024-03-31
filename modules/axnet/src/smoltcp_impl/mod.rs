@@ -337,6 +337,7 @@ pub fn bench_receive() {
 pub(crate) fn init(_net_dev: AxNetDevice) {
     #[cfg(feature = "ip")]
     {
+        info!("net_impl init feature ip");
         let mut device = LoopbackDev::new(Medium::Ip);
         let config = Config::new(smoltcp::wire::HardwareAddress::Ip);
 
@@ -352,10 +353,13 @@ pub(crate) fn init(_net_dev: AxNetDevice) {
         });
         LOOPBACK.init_by(Mutex::new(iface));
         LOOPBACK_DEV.init_by(Mutex::new(device));
+        info!("net_impl init feature ip end");
     }
+
 
     #[cfg(not(feature = "ip"))]
     {
+        info!("net_impl init not feature ip ");
         let ether_addr = EthernetAddress(_net_dev.mac_address().0);
         let eth0 = InterfaceWrapper::new("eth0", _net_dev, ether_addr);
 
@@ -369,6 +373,7 @@ pub(crate) fn init(_net_dev: AxNetDevice) {
         info!("  ether:    {}", ETH0.ethernet_address());
         info!("  ip:       {}/{}", ip, IP_PREFIX);
         info!("  gateway:  {}", gateway);
+        info!("net_impl init not feature ip end");
     }
 
     SOCKET_SET.init_by(SocketSetWrapper::new());
